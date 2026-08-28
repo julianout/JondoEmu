@@ -1577,7 +1577,7 @@ namespace Jondo.Unity.Server.Handlers
             }
 
             await WriteFrameAsync(stream, ConnectionProtocol.Push(Op.Jxc,
-                Network.FightProtocol.BuildCooldowns(me, RecargasDe(yoMismo))));
+                Network.FightProtocol.BuildCooldowns(me, CooldownsForPacket(yoMismo))));
 
             await WriteFrameAsync(stream, ConnectionProtocol.Push(Op.Jto,
                 Network.FightProtocol.BuildSequenceStart(me, Network.FightProtocol.OpeningSequence)));
@@ -2456,11 +2456,23 @@ namespace Jondo.Unity.Server.Handlers
         /// puestas, incluso las que ya están a cero: es lo que hace el servidor real, cuyo jxc
         /// sigue listando los mismos hechizos ronda tras ronda con un cero al lado.
         /// </summary>
-        private static IEnumerable<(int Spell, int Rounds)> RecargasDe(Fighter quien)
+        internal static IEnumerable<(int Spell, int Rounds)> CooldownsForPacket(Fighter fighter)
         {
-            if (quien == null) yield break;
-            foreach (var par in quien.Recarga) yield return (par.Key, par.Value);
+            // In 1,351 captured non-player jxc frames, 1,284 are empty. Keep monsters and summons
+            // empty by default; their Recarga dictionary remains authoritative for server AI.
+            if (fighter == null || fighter.IsMonster) yield break;
+            foreach (var pair in fighter.Recarga) yield return (pair.Key, pair.Value);
         }
+
+        internal static bool ApplyCooldownOutcome(Managers.Outcome outcome)
+        {
+            if (outcome?.Sobre == null || outcome.CooldownSpell <= 0) return false;
+            outcome.Sobre.Recarga[outcome.CooldownSpell] = Math.Max(0, outcome.CooldownRounds);
+            return true;
+        }
+
+        internal static bool IsSpellOnCooldown(Fighter fighter, int spell)
+            => fighter != null && fighter.Recarga.TryGetValue(spell, out int rounds) && rounds > 0;
 
         /// <summary>
         /// Deja apuntado el hechizo sobre quien lo lleva, si le queda algo por hacer.
@@ -2872,6 +2884,16 @@ namespace Jondo.Unity.Server.Handlers
                         quienLanza.CurrentMP += c.LeDaAlLanzador;
                         fichas.Add((quienLanza.Id, MovementPointsCharacteristic));
                     }
+                }
+
+                // Effect 1045 mutates server state only. The observed wire positions for jxc are
+                // fight setup and the end-of-turn wrapper, never a loose mid-cast frame.
+                if (ApplyCooldownOutcome(c))
+                {
+                    Program.LogDebug($"[Fight] Effect {c.Efecto.EffectId} sets spell " +
+                                     $"{c.CooldownSpell} to {c.CooldownRounds} cooldown round(s) " +
+                                     $"for fighter {c.Sobre.Id}.");
+                    continue;
                 }
 
                 // Las curaciones.
@@ -3643,6 +3665,7 @@ namespace Jondo.Unity.Server.Handlers
             foreach (int spell in monster.SpellIds)
             {
                 if (prey == null || !prey.IsAlive) break;
+                if (IsSpellOnCooldown(monster, spell)) continue;
 
                 // El grado que el monstruo tiene de ese hechizo, que viene en su ficha.
                 int monsterGrade = monster.SpellGrades.TryGetValue(spell, out int g) ? g : 1;
@@ -3659,6 +3682,7 @@ namespace Jondo.Unity.Server.Handlers
 
                 for (int vez = 0; vez < tope; vez++)
                 {
+                    if (IsSpellOnCooldown(monster, spell)) break;
                     if (data.APCost > monster.CurrentAP) break;
                     if (lanzados >= TopeDeLanzamientosPorTurno) break;
                     if (!prey.IsAlive) break;
@@ -4434,7 +4458,7 @@ namespace Jondo.Unity.Server.Handlers
                 Network.FightProtocol.BuildSequenceStart(ending.Id,
                                                          Network.FightProtocol.TurnEndSequence)));
             await WriteFrameAsync(stream, ConnectionProtocol.Push(Op.Jxc,
-                Network.FightProtocol.BuildCooldowns(ending.Id, RecargasDe(ending))));
+                Network.FightProtocol.BuildCooldowns(ending.Id, CooldownsForPacket(ending))));
             await WriteFrameAsync(stream, ConnectionProtocol.Push(Op.Jwi,
                 Network.FightProtocol.BuildSequenceEnd(fight.SiguienteAccion(), ending.Id,
                                                        Network.FightProtocol.TurnEndSequence)));

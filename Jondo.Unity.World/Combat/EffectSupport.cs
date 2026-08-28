@@ -74,6 +74,9 @@ namespace Jondo.Unity.World.Combat
         /// <summary>Summon a controllable creature through the same combatant creation path.</summary>
         public const int ControllableSummon = 1011;
 
+        /// <summary>Set the spell carried in DiceNum to exactly Value cooldown rounds.</summary>
+        public const int SetCooldown = 1045;
+
         /// <summary>Heal a fixed amount, scaled by Intelligence and the Heals characteristic.</summary>
         public const int Heal = 108;
 
@@ -122,7 +125,7 @@ namespace Jondo.Unity.World.Combat
             {
                 Push, Pull, StepBack, StepForward,
                 AddState, RemoveState,
-                CastSpell, Summon, ControllableSummon,
+                CastSpell, Summon, ControllableSummon, SetCooldown,
                 Heal, WaterHeal, AirHeal, EarthHeal, HealPercent, Kill,
                 CasterCurrentHealthDamage, CasterMissingHealthDamage, BestElementDamage,
             };

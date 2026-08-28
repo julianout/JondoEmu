@@ -45,6 +45,10 @@ namespace Jondo.Unity.Server.Managers
         /// <summary>The one-based monster grade carried by a summon effect's dice side.</summary>
         public int SummonGrade { get; init; }
 
+        /// <summary>The spell whose cooldown must be replaced, including a reset to zero.</summary>
+        public int CooldownSpell { get; init; }
+        public int CooldownRounds { get; init; }
+
         /// <summary>
         /// Cuántos puntos se lleva el que lanza, cuando el efecto es de ROBO. Los mismos que se
         /// le han quitado al objetivo, que van en <see cref="Cuanto"/> en negativo.
@@ -298,6 +302,7 @@ namespace Jondo.Unity.Server.Managers
         /// <summary>"Invoca: #1". La plantilla del bicho viaja en el dado.</summary>
         public const int Invocar = EffectSupport.Summon;
         public const int ControllableSummon = EffectSupport.ControllableSummon;
+        private const int SetCooldown = EffectSupport.SetCooldown;
 
         /// <summary>
         /// Los efectos que colocan algo EN UNA CASILLA en vez de sobre alguien: una invocación,
@@ -804,6 +809,20 @@ namespace Jondo.Unity.Server.Managers
                     HechizoOrigen = hechizo, NivelOrigen = grado,
                     Invoca = efecto.DiceNum,
                     SummonGrade = efecto.DiceSide > 0 ? efecto.DiceSide : 1,
+                };
+            }
+
+            if (efecto.EffectId == SetCooldown)
+            {
+                if (efecto.DiceNum <= 0) return null;
+                return new Outcome
+                {
+                    Sobre = sobre,
+                    Efecto = efecto,
+                    HechizoOrigen = hechizo,
+                    NivelOrigen = grado,
+                    CooldownSpell = efecto.DiceNum,
+                    CooldownRounds = Math.Max(0, efecto.Value),
                 };
             }
 
