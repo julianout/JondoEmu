@@ -87,6 +87,16 @@ namespace Jondo.Unity.World.Maps
         }
 
         /// <summary>
+        /// Whether two cells share one of the combat grid's isometric axes. Raw rows and columns
+        /// do not represent straight spell lines on this board.
+        /// </summary>
+        public static bool AreAligned(int cellA, int cellB)
+        {
+            if (!IsValid(cellA) || !IsValid(cellB)) return false;
+            return PointX[cellA] == PointX[cellB] || PointY[cellA] == PointY[cellB];
+        }
+
+        /// <summary>
         /// Is there line of sight between two cells? Walks the segment joining their centers and
         /// fails if it crosses any cell flagged as opaque. The endpoints do not count: caster and
         /// target never block themselves.

@@ -232,6 +232,7 @@ namespace Jondo.Unity.Server.Handlers
                 monsterFighter.CurrentHP = monsterFighter.MaxHP;
                 monsterFighter.CurrentAP = monsterFighter.MaxAP;
                 monsterFighter.CurrentMP = monsterFighter.MaxMP;
+                InitializeMonsterCooldowns(monsterFighter);
 
                 fight.AddMonster(monsterFighter);
             }
@@ -2151,6 +2152,13 @@ namespace Jondo.Unity.Server.Handlers
             var limites = LimitesDe(spell, caster.Level);
             int cost = limites.Cost, spellLevel = limites.LevelId, grade = limites.Grade;
 
+            if (limites.CastInLine && !MapGeometry.AreAligned(caster.CellId, cell))
+            {
+                Program.LogDebug($"[Fight] Spell {spell} requires an aligned target: " +
+                                 $"cells {caster.CellId} and {cell} are off-axis.");
+                return;
+            }
+
             // EL ALCANCE, que no se comprobaba en ninguna parte del camino vivo: se podía lanzar
             // cualquier cosa a cualquier distancia. Por eso los embrujos que dan alcance parecían
             // no hacer nada — no es que no se sumaran, es que no había límite que ampliar.
@@ -2173,7 +2181,7 @@ namespace Jondo.Unity.Server.Handlers
                 // servidor la ignoraba al comprobar si el hechizo llega.
                 //
                 // El alcance mínimo NO lo toca: la 19 amplía hasta dónde llegas, no desde dónde.
-                int maximo = limites.AlcanceMaximo
+                int maximo = Math.Max(limites.AlcanceMinimo, limites.AlcanceMaximo)
                            + caster.Range
                            + caster.Buffs.De(AlcanceCaracteristica, fight.RoundNumber)
                            + caster.Buffs.DelHechizo(spell, Jondo.Unity.World.Fights.SpellAspect.AlcanceMaximo,
@@ -2448,7 +2456,22 @@ namespace Jondo.Unity.Server.Handlers
             summon.JuegaTurno = summon.SpellIds.Count > 0
                 || TieneAlgoQueHacerAlEmpezar(recipe.HechizoPropio,
                                               recipe.GradoDelHechizoPropio);
+            InitializeMonsterCooldowns(summon);
             return summon;
+        }
+
+        internal static void InitializeMonsterCooldowns(Fighter monster)
+        {
+            if (monster == null || !monster.IsMonster) return;
+            foreach (int spell in monster.SpellIds)
+            {
+                int grade = monster.SpellGrades.TryGetValue(spell, out int knownGrade)
+                    ? knownGrade
+                    : 1;
+                var data = DatabaseManager.GetSpellCombatData(spell, grade);
+                if (data?.InitialCooldown > 0)
+                    monster.Recarga[spell] = data.InitialCooldown;
+            }
         }
 
         /// <summary>
@@ -3631,11 +3654,18 @@ namespace Jondo.Unity.Server.Handlers
             // 857 hechizos de monstruo (11,3 % del arsenal) que tienen alcance mínimo mayor que
             // uno. El bicho gastaba los puntos de movimiento en meterse justo donde no podía hacer
             // nada, y encima ya no le quedaban para volver a separarse.
-            int deseada = prey != null ? DistanciaQueLeConviene(monster, best) : 1;
+            int deseada = prey != null ? DistanciaQueLeConviene(monster, prey) : 1;
+            bool canAttackHere = prey != null
+                && CanMonsterAttackFrom(fight, monster, prey, monster.CellId);
+            bool preferAlignment = prey != null
+                && MonsterHasAvailableLineSpell(monster, prey, monster.CellId);
 
-            if (prey != null && deseada != best && monster.CurrentMP > 0)
+            if (prey != null && monster.CurrentMP > 0 && (deseada != best || !canAttackHere))
             {
-                var walked = PathToward(fight, monster.CellId, prey.CellId, monster.CurrentMP, deseada);
+                var walked = PathToward(
+                    fight, monster.CellId, prey.CellId, monster.CurrentMP, deseada,
+                    cell => CanMonsterAttackFrom(fight, monster, prey, cell),
+                    preferAlignment);
                 if (walked.Count > 1)
                 {
                     var path = walked.ConvertAll(c => (long)c);
@@ -3692,10 +3722,21 @@ namespace Jondo.Unity.Server.Handlers
                     var objetivo = ObjetivoDe(fight, monster, spell, monsterGrade, prey, data);
                     if (objetivo == null || !objetivo.IsAlive) break;
 
+                    var rejection = SpellCastRules.Check(
+                        monster, spell, objetivo.Id, monster.CellId, objetivo.CellId,
+                        data.MaxCastPerTurn, data.MaxCastPerTarget, data.CastInLine);
+                    if (rejection != SpellCastRules.Rejection.None)
+                    {
+                        Program.LogDebug($"[Fight] Monster {monster.Id} cannot cast spell {spell} " +
+                                         $"on {objetivo.Id}: {rejection}.");
+                        break;
+                    }
+
                     // Y el alcance se mide contra el objetivo ELEGIDO, no contra la presa. Ésa era
                     // la línea que dejaba muertos los hechizos de alcance cero.
                     int lejos = CellDistance(monster.CellId, objetivo.CellId);
-                    if (lejos < data.MinRange || lejos > data.MaxRange) break;
+                    int maxRange = EffectiveMaximumRange(data);
+                    if (lejos < data.MinRange || lejos > maxRange) break;
 
                     // Y LA LINEA DE VISION, que el turno del monstruo no miraba.
                     //
@@ -3713,6 +3754,8 @@ namespace Jondo.Unity.Server.Handlers
 
                     monster.CurrentAP -= data.APCost;
                     lanzados++;
+                    SpellCastRules.Register(
+                        monster, spell, objetivo.Id, data.MinCastInterval);
 
                     // Y su identificador, para que su lanzamiento también diga QUÉ se lanza.
                     int spellLevel = data.SpellLevelId;
@@ -3764,6 +3807,64 @@ namespace Jondo.Unity.Server.Handlers
         /// </summary>
         private const int TopeDeLanzamientosPorTurno = 20;
 
+        private static bool CanMonsterAttackFrom(FightInstance fight, Fighter monster,
+                                                 Fighter prey, int sourceCell)
+        {
+            foreach (int spell in monster.SpellIds)
+            {
+                int grade = monster.SpellGrades.TryGetValue(spell, out int knownGrade)
+                    ? knownGrade
+                    : 1;
+                var data = DatabaseManager.GetSpellCombatData(spell, grade);
+                if (data == null || data.APCost <= 0 || data.APCost > monster.CurrentAP) continue;
+                if (data.MaxRange <= 0 || !EsOfensivo(spell, grade)) continue;
+
+                if (SpellCastRules.Check(
+                        monster, spell, prey.Id, sourceCell, prey.CellId,
+                        data.MaxCastPerTurn, data.MaxCastPerTarget, data.CastInLine)
+                    != SpellCastRules.Rejection.None)
+                    continue;
+
+                int distance = CellDistance(sourceCell, prey.CellId);
+                int maximumRange = EffectiveMaximumRange(data);
+                if (distance < data.MinRange || distance > maximumRange) continue;
+                if (data.NeedsLineOfSight &&
+                    !MapGeometry.HasLineOfSight(
+                        sourceCell, prey.CellId, MapManager.GetLosBlockers(fight.ArenaMapId)))
+                    continue;
+
+                return true;
+            }
+            return false;
+        }
+
+        private static bool MonsterHasAvailableLineSpell(Fighter monster, Fighter prey,
+                                                         int sourceCell)
+        {
+            foreach (int spell in monster.SpellIds)
+            {
+                int grade = monster.SpellGrades.TryGetValue(spell, out int knownGrade)
+                    ? knownGrade
+                    : 1;
+                var data = DatabaseManager.GetSpellCombatData(spell, grade);
+                if (data == null || !data.CastInLine || data.APCost <= 0
+                    || data.APCost > monster.CurrentAP || data.MaxRange <= 0
+                    || !EsOfensivo(spell, grade))
+                    continue;
+
+                // Ignore alignment in this probe: alignment is precisely what movement must fix.
+                if (SpellCastRules.Check(
+                        monster, spell, prey.Id, sourceCell, prey.CellId,
+                        data.MaxCastPerTurn, data.MaxCastPerTarget, castInLine: false)
+                    == SpellCastRules.Rejection.None)
+                    return true;
+            }
+            return false;
+        }
+
+        internal static int EffectiveMaximumRange(SpellCombatData spell)
+            => spell == null ? 0 : Math.Max(spell.MinRange, spell.MaxRange);
+
         /// <summary>
         /// A qué distancia de la presa le conviene ponerse al monstruo: la banda del hechizo
         /// ofensivo más lejano que pueda pagar.
@@ -3773,8 +3874,9 @@ namespace Jondo.Unity.Server.Handlers
         /// ahora y el camino lo aleja: es lo que hace falta para los hechizos de alcance mínimo
         /// grande, que pegado no se pueden lanzar.
         /// </summary>
-        private static int DistanciaQueLeConviene(Fighter monster, int ahora)
+        private static int DistanciaQueLeConviene(Fighter monster, Fighter prey)
         {
+            int ahora = CellDistance(monster.CellId, prey.CellId);
             int deseada = -1;
             foreach (int spell in monster.SpellIds)
             {
@@ -3785,8 +3887,13 @@ namespace Jondo.Unity.Server.Handlers
                 // Los de alcance cero se lanzan encima de uno mismo: no piden acercarse a nada.
                 if (data.MaxRange <= 0) continue;
                 if (!EsOfensivo(spell, grado)) continue;
+                if (SpellCastRules.Check(
+                        monster, spell, prey.Id, monster.CellId, prey.CellId,
+                        data.MaxCastPerTurn, data.MaxCastPerTarget, castInLine: false)
+                    != SpellCastRules.Rejection.None)
+                    continue;
 
-                int cabe = Math.Min(data.MaxRange, ahora);
+                int cabe = Math.Min(EffectiveMaximumRange(data), ahora);
                 if (cabe < data.MinRange) cabe = data.MinRange;
                 if (cabe > deseada) deseada = cabe;
             }
@@ -3898,11 +4005,15 @@ namespace Jondo.Unity.Server.Handlers
         /// pero un hechizo de alcance mínimo tres quiere quedarse a tres, y entonces esto también
         /// sirve para ALEJARSE si el bicho está demasiado cerca.
         /// </param>
-        private static List<int> PathToward(FightInstance fight, int from, int to, int steps,
-                                            int deseada = 1)
+        internal static List<int> PathToward(FightInstance fight, int from, int to, int steps,
+                                             int deseada = 1,
+                                             Func<int, bool> idealCell = null,
+                                             bool preferAlignment = false,
+                                             Func<int, bool> canEnterCell = null)
         {
             var camino = new List<int> { from };
             if (steps <= 0) return camino;
+            if (idealCell?.Invoke(from) == true) return camino;
 
             // BÚSQUEDA EN ANCHURA, y no el descenso avaro de antes.
             //
@@ -3920,7 +4031,7 @@ namespace Jondo.Unity.Server.Handlers
             cola.Enqueue(from);
 
             int mejor = from;
-            int mejorFallo = Math.Abs(CellDistance(from, to) - deseada);
+            int mejorFallo = TacticalCellError(from, to, deseada, preferAlignment);
 
             while (cola.Count > 0)
             {
@@ -3932,17 +4043,33 @@ namespace Jondo.Unity.Server.Handlers
                 {
                     if (pasos.ContainsKey(vecina)) continue;
                     if (vecina == to) continue;                        // no se le pisa encima
-                    if (!PisableEnCombate(fight, vecina)) continue;
-                    if (Occupied(fight, vecina)) continue;
+                    if (canEnterCell != null)
+                    {
+                        if (!canEnterCell(vecina)) continue;
+                    }
+                    else
+                    {
+                        if (!PisableEnCombate(fight, vecina)) continue;
+                        if (Occupied(fight, vecina)) continue;
+                    }
 
                     pasos[vecina] = paso + 1;
                     deDonde[vecina] = aqui;
                     cola.Enqueue(vecina);
 
+                    // Breadth-first order guarantees that the first valid casting cell also costs
+                    // the fewest MP. This is what lets an off-axis line spell step into alignment.
+                    if (idealCell?.Invoke(vecina) == true)
+                    {
+                        mejor = vecina;
+                        cola.Clear();
+                        break;
+                    }
+
                     // La mejor casilla es la que deja al bicho más cerca de la distancia que
                     // quiere, y como la anchura las visita en orden de pasos, la primera que
                     // empata es también la que menos puntos de movimiento cuesta.
-                    int fallo = Math.Abs(CellDistance(vecina, to) - deseada);
+                    int fallo = TacticalCellError(vecina, to, deseada, preferAlignment);
                     if (fallo < mejorFallo) { mejorFallo = fallo; mejor = vecina; }
                 }
             }
@@ -3954,6 +4081,18 @@ namespace Jondo.Unity.Server.Handlers
             alReves.Reverse();
             camino.AddRange(alReves);
             return camino;
+        }
+
+        internal static int TacticalCellError(int cell, int target, int desiredDistance,
+                                              bool preferAlignment)
+        {
+            int rangeError = Math.Abs(CellDistance(cell, target) - desiredDistance);
+            if (!preferAlignment || MapGeometry.AreAligned(cell, target)) return rangeError;
+
+            var (x, y) = MapGeometry.CellToPoint(cell);
+            var (targetX, targetY) = MapGeometry.CellToPoint(target);
+            int alignmentError = Math.Min(Math.Abs(x - targetX), Math.Abs(y - targetY));
+            return rangeError + alignmentError * 2;
         }
 
         /// <summary>Las cuatro casillas pegadas a una, que son las que están a distancia uno.</summary>
@@ -4337,7 +4476,8 @@ namespace Jondo.Unity.Server.Handlers
         public readonly record struct LimitesDelHechizo(
             int Cost, int LevelId, int Grade,
             int PorTurno, int PorObjetivo, int Intervalo, int EsperaInicial,
-            int CriticoPropio, int AlcanceMinimo = 0, int AlcanceMaximo = 0);
+            int CriticoPropio, int AlcanceMinimo = 0, int AlcanceMaximo = 0,
+            bool CastInLine = false);
 
         /// <summary>
         /// Los límites de lanzamiento, que salen de las mismas columnas de SpellLevels de las que
@@ -4368,7 +4508,7 @@ namespace Jondo.Unity.Server.Handlers
                 command.CommandText =
                     "SELECT APCost, Id, Grade, MaxCastPerTurn, MaxCastPerTarget, " +
                     "MinCastInterval, InitialCooldown, CriticalHitProbability, " +
-                    "MinRange, MaxRange FROM SpellLevels " +
+                    "MinRange, MaxRange, CastInLine FROM SpellLevels " +
                     "WHERE SpellId = $id AND MinPlayerLevel <= $lvl ORDER BY Grade DESC LIMIT 1;";
                 command.Parameters.AddWithValue("$id", spellId);
                 command.Parameters.AddWithValue("$lvl", nivel);
@@ -4384,7 +4524,8 @@ namespace Jondo.Unity.Server.Handlers
                         reader.IsDBNull(6) ? 0 : (int)reader.GetInt64(6),
                         reader.IsDBNull(7) ? 0 : (int)reader.GetInt64(7),
                         reader.IsDBNull(8) ? 0 : (int)reader.GetInt64(8),
-                        reader.IsDBNull(9) ? 0 : (int)reader.GetInt64(9));
+                        reader.IsDBNull(9) ? 0 : (int)reader.GetInt64(9),
+                        !reader.IsDBNull(10) && reader.GetInt64(10) != 0);
                 }
             }
             catch (Exception ex)
@@ -4399,6 +4540,9 @@ namespace Jondo.Unity.Server.Handlers
             _grades[(spellId, nivel)] = salida;
             return salida;
         }
+
+        internal static bool RequiresAlignedCast(int spellId, int level)
+            => LimitesDe(spellId, level).CastInLine;
 
         /// <summary>
         /// Los límites de cada hechizo por grado, ya leídos.
@@ -4443,16 +4587,12 @@ namespace Jondo.Unity.Server.Handlers
             // las lleva bajadas: medido en la captura de Agudeza Absoluta, lanzada en la ronda 8
             // con intervalo 4 —el jxc de ese turno dice 3, el de la 9 dice 2, el de la 10 uno, el
             // de la 11 cero y se relanza en la 12—. Ocho más cuatro, doce.
-            foreach (var hechizo in new List<int>(ending.Recarga.Keys))
-            {
-                if (ending.Recarga[hechizo] > 0) ending.Recarga[hechizo]--;
-            }
+            SpellCastRules.AdvanceCooldowns(ending);
             // Los retos de posicion se juzgan AQUI, con el que acaba todavia donde acabo y con sus
             // PM sin reponer. Va antes de limpiar los contadores del turno, que el Versatil los usa.
             await ChallengeWatcher.TurnEndedAsync(stream, fight, ending);
 
-            ending.LanzadosEsteTurno.Clear();
-            ending.LanzadosPorObjetivo.Clear();
+            SpellCastRules.ClearTurnCounters(ending);
 
             await WriteFrameAsync(stream, ConnectionProtocol.Push(Op.Jto,
                 Network.FightProtocol.BuildSequenceStart(ending.Id,
