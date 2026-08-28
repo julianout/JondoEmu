@@ -4,6 +4,13 @@ using Xunit;
 
 namespace Jondo.Unity.Tests.Network
 {
+    [CollectionDefinition(Name, DisableParallelization = true)]
+    public sealed class ClientLaunchRegistryCollection
+    {
+        public const string Name = "Client launch registry";
+    }
+
+    [Collection(ClientLaunchRegistryCollection.Name)]
     public class ClientLaunchCleanupTests
     {
         private static long _nextAccountId = 9_000_000_000;
@@ -55,6 +62,52 @@ namespace Jondo.Unity.Tests.Network
             finally
             {
                 SessionRegistry.Unregister(oldSession);
+                ClientLaunchRegistry.RemoveByAccount(accountId);
+            }
+        }
+
+        [Fact]
+        public void Zaap_handshake_without_a_bound_game_socket_expires()
+        {
+            long accountId = Interlocked.Increment(ref _nextAccountId);
+            string hash = Guid.NewGuid().ToString("N");
+            var launch = ClientLaunchRegistry.Register(accountId, "token", hash, "fr");
+
+            try
+            {
+                Assert.True(ClientLaunchRegistry.TryConnect(
+                    launch.InstanceId, hash, out string gameSession));
+                Assert.True(ClientLaunchRegistry.TryGetByGameSession(gameSession, out _));
+
+                Assert.Equal(1, ClientLaunchRegistry.SoltarLosCaducados(TimeSpan.Zero));
+
+                Assert.False(ClientLaunchRegistry.IsActive(accountId));
+                Assert.False(ClientLaunchRegistry.TryGetByGameSession(gameSession, out _));
+            }
+            finally
+            {
+                ClientLaunchRegistry.RemoveByAccount(accountId);
+            }
+        }
+
+        [Fact]
+        public void Bound_game_socket_prevents_launch_expiration()
+        {
+            long accountId = Interlocked.Increment(ref _nextAccountId);
+            var launch = ClientLaunchRegistry.Register(
+                accountId, "token", Guid.NewGuid().ToString("N"), "fr");
+            var session = BoundSession(accountId, launch.InstanceId);
+
+            try
+            {
+                Assert.True(SessionRegistry.Register(session));
+
+                Assert.Equal(0, ClientLaunchRegistry.SoltarLosCaducados(TimeSpan.Zero));
+                Assert.True(ClientLaunchRegistry.IsActive(accountId));
+            }
+            finally
+            {
+                SessionRegistry.Unregister(session);
                 ClientLaunchRegistry.RemoveByAccount(accountId);
             }
         }

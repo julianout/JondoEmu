@@ -212,13 +212,11 @@ namespace Jondo.Unity.Server.Network
                 var launch = pair.Value;
                 if (ahora - launch.CreatedAtUtc < cuanto) continue;
 
-                // Si ya está jugando de verdad no se toca: tiene sesión de juego abierta.
-                bool jugando = false;
-                foreach (var suya in ByGameSession)
-                {
-                    if (ReferenceEquals(suya.Value, launch)) { jugando = true; break; }
-                }
-                if (jugando) continue;
+                // A Zaap gameSession only proves that the first handshake happened. The client
+                // can disappear while opening its second connection and never present a ticket;
+                // only a bound game socket is a live client that must be preserved.
+                if (SessionRegistry.HasConnectedLaunch(launch.AccountId, launch.InstanceId))
+                    continue;
 
                 Remove(launch);
                 soltados++;

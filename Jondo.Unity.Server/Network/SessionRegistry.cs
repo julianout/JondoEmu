@@ -75,6 +75,13 @@ namespace Jondo.Unity.Server.Network
         public static GameSession? FindByCharacter(long characterId)
             => _sessions.Values.FirstOrDefault(s => s.CharacterId == characterId);
 
+        /// <summary>Whether a launch has reached an authenticated game socket.</summary>
+        public static bool HasConnectedLaunch(long accountId, int launchInstanceId)
+            => accountId > 0 && launchInstanceId > 0
+               && _sessions.Values.Any(session =>
+                   session.AccountId == accountId
+                   && session.LaunchInstanceId == launchInstanceId);
+
         /// <summary>
         /// El personaje conectado que se llama asi. Hace falta para los susurros: el cliente
         /// manda el NOMBRE, no el identificador.
