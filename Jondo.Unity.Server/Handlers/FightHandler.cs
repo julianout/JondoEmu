@@ -3266,6 +3266,43 @@ namespace Jondo.Unity.Server.Handlers
             return fuera;
         }
 
+        /// <summary>
+        /// Applies offensive characteristics and target resistance to a resolved base damage.
+        /// Caster-health percentage effects deliberately skip characteristics, Power, and flat
+        /// damage: their catalogue value already defines the complete offensive amount.
+        /// </summary>
+        internal static int CalculateEffectDamage(
+            FightInstance fight, Fighter caster, Fighter target, int effectId,
+            Jondo.Unity.World.Fights.ElementType element, int baseDamage, bool critical)
+        {
+            bool scalesWithOffense = !Managers.EffectEngine.IsCasterHealthDamage(effectId);
+            int stat = scalesWithOffense
+                ? ConBonos(caster, CaracteristicaDelElemento(element),
+                           caster.GetStatForElement(element), fight.RoundNumber)
+                : 0;
+            int power = scalesWithOffense
+                ? ConBonos(caster, PotenciaCaracteristica, caster.Power, fight.RoundNumber)
+                : 0;
+            int flatElement = scalesWithOffense ? caster.GetFlatDamageForElement(element) : 0;
+            int flat = scalesWithOffense
+                ? ConBonos(caster, DanoFijoCaracteristica, caster.FlatDamage, fight.RoundNumber)
+                  + (critical
+                      ? ConBonos(caster, DanoCriticoCaracteristica,
+                                 caster.CriticalDamage, fight.RoundNumber)
+                      : 0)
+                : 0;
+
+            return Jondo.Unity.World.Fights.DamageCalculator.CalculateDamage(
+                baseDamage: baseDamage,
+                element: element,
+                statValue: stat,
+                power: power,
+                flatElementDamage: flatElement,
+                flatDamage: flat,
+                targetResPct: target.GetResPctForElement(element),
+                targetFlatRes: 0);
+        }
+
         private static async Task UnGolpeAsync(NetworkStream stream, FightInstance fight,
                                                Fighter caster, int spell,
                                                Managers.SpellEffect efecto, int elemento,
@@ -3295,23 +3332,27 @@ namespace Jondo.Unity.Server.Handlers
                 Program.LogDebug($"[Combate] El efecto {efecto.EffectId} pega el {sacadoDelDado}% de " +
                                  $"los {target.VidaErosionada} erosionados de {target.Id}: {baseDamage}.");
             }
+            else if (Managers.EffectEngine.IsCasterHealthDamage(efecto.EffectId))
+            {
+                baseDamage = Managers.EffectEngine.CasterHealthDamageBase(
+                    caster, efecto.EffectId, sacadoDelDado);
+                Program.LogDebug($"[Fight] Effect {efecto.EffectId} deals {sacadoDelDado}% of " +
+                                 $"caster {caster.Id}'s applicable health: base {baseDamage}.");
+            }
 
             // Y lo que le hayan sumado a ESE hechizo por embrujo: el efecto 293, "+#3 de daños
             // básicos". Flecha Helada se lo pone a sí misma, así que la segunda vez que se lanza
             // pega más que la primera.
-            int deEmbrujo = caster.Buffs.DelHechizo(spell, Jondo.Unity.World.Fights.SpellAspect.DanoBase, fight.RoundNumber);
+            int deEmbrujo = Managers.EffectEngine.IsCasterHealthDamage(efecto.EffectId)
+                ? 0
+                : caster.Buffs.DelHechizo(
+                    spell, Jondo.Unity.World.Fights.SpellAspect.DanoBase, fight.RoundNumber);
             if (deEmbrujo != 0)
             {
                 baseDamage += deEmbrujo;
                 Program.LogDebug($"[Combate] El hechizo {spell} lleva {deEmbrujo:+#;-#;0} de daños " +
                                  $"básicos por embrujo: base {baseDamage}.");
             }
-
-            // Los daños fijos van al FINAL, sin multiplicar por la característica ni por la
-            // potencia: los generales de la característica 16 más los del elemento con el que se
-            // pega (88 a 92), y si el golpe sale crítico, además los daños críticos (86).
-            int flat = ConBonos(caster, DanoFijoCaracteristica, caster.FlatDamage, fight.RoundNumber)
-                     + (critical ? ConBonos(caster, DanoCriticoCaracteristica, caster.CriticalDamage, fight.RoundNumber) : 0);
 
             // Y la caída de la zona: el que está en el centro se lleva el golpe entero y a cada
             // casilla de distancia se le quita el tanto por ciento que diga el hechizo. Se aplica
@@ -3326,25 +3367,8 @@ namespace Jondo.Unity.Server.Handlers
                 baseDamage = enElBorde;
             }
 
-            // LAS CARACTERÍSTICAS CON SUS BONOS DE COMBATE. Ésta era la mitad que faltaba de
-            // Tiros Potentes: sus +250 de potencia se guardaban como embrujo y se anunciaban al
-            // panel, pero la fórmula de daño seguía leyendo el número de siempre, así que el
-            // hechizo no hacía pegar más. El total de una característica es lo de base, más los
-            // pergaminos y el equipo —que ya venían en el Fighter—, más lo que pongan los hechizos
-            // mientras dure el combate.
-            int elementoDelPersonaje = ConBonos(caster, CaracteristicaDelElemento(element),
-                                                caster.GetStatForElement(element), fight.RoundNumber);
-            int potencia = ConBonos(caster, PotenciaCaracteristica, caster.Power, fight.RoundNumber);
-
-            int damage = Jondo.Unity.World.Fights.DamageCalculator.CalculateDamage(
-                baseDamage: baseDamage,
-                element: element,
-                statValue: elementoDelPersonaje,
-                power: potencia,
-                flatElementDamage: caster.GetFlatDamageForElement(element),
-                flatDamage: flat,
-                targetResPct: target.GetResPctForElement(element),
-                targetFlatRes: 0);
+            int damage = CalculateEffectDamage(
+                fight, caster, target, efecto.EffectId, element, baseDamage, critical);
 
             // Los MULTIPLICADORES de quien lo recibe: "daños sufridos x110%" es el efecto 1163, el
             // que pone Represalias. Van al final, sobre el daño ya calculado.

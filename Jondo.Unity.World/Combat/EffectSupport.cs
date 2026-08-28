@@ -93,6 +93,15 @@ namespace Jondo.Unity.World.Combat
 
         public const int LastDamage = 100;
 
+        /// <summary>Neutral damage equal to a percentage of the caster's current health.</summary>
+        public const int CasterCurrentHealthDamage = 89;
+
+        /// <summary>Neutral damage equal to a percentage of the caster's missing health.</summary>
+        public const int CasterMissingHealthDamage = 279;
+
+        /// <summary>Damage using whichever elemental characteristic is highest on the caster.</summary>
+        public const int BestElementDamage = 2822;
+
         /// <summary>
         /// Category 2 is the weapon-only effects, which the catalogue path deliberately skips.
         /// </summary>
@@ -115,6 +124,7 @@ namespace Jondo.Unity.World.Combat
                 AddState, RemoveState,
                 CastSpell, Summon, ControllableSummon,
                 Heal, WaterHeal, AirHeal, EarthHeal, HealPercent, Kill,
+                CasterCurrentHealthDamage, CasterMissingHealthDamage, BestElementDamage,
             };
 
             for (int damage = FirstDamage; damage <= LastDamage; damage++) known.Add(damage);

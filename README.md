@@ -366,8 +366,8 @@ is wrong. Four things it found, all measured:
   across 401 captures, 184 shows up on 420 elements and 114 on 23, every one a zaap. Our own log
   catches us emitting the pair `(type 0, skill 114)` 84 times — a pair that occurs zero times
   anywhere real. New passages declare 184
-- **642 of the game's 872 effects do nothing at all.** They are drawn on the spell card and the
-  engine has no code for them and no characteristic to apply — and **15,266 of the 34,823 spell
+- **639 of the game's 872 effects do nothing at all.** They are drawn on the spell card and the
+  engine has no code for them and no characteristic to apply — and **15,174 of the 34,823 spell
   levels carry at least one**. The Studio ranks them by how many levels each one breaks, which turns
   a curiosity into a work list: effect 1160 alone is on 6,709 levels, and healing — effect 108 — is
   on 751

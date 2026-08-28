@@ -12,9 +12,9 @@ namespace Jondo.Unity.Tests.Combat
     /// <see cref="EffectSupport"/>, so an effect gaining an implementation without being added here
     /// would not compile.
     ///
-    /// Measured over the 872 effects in <c>world.db</c>: 25 have code, 205 are applied as a
-    /// characteristic, and <b>642 do nothing at all</b> — and 15,266 of the 34,823 spell levels
-    /// carry at least one of those 642.
+    /// Measured over the 872 effects in <c>world.db</c>: 28 have code, 205 are applied as a
+    /// characteristic, and <b>639 do nothing at all</b> — and 15,174 of the 34,823 spell levels
+    /// carry at least one of those 639.
     /// </remarks>
     public class EffectSupportTests
     {
@@ -46,6 +46,9 @@ namespace Jondo.Unity.Tests.Combat
         [InlineData(EffectSupport.EarthHeal)]
         [InlineData(EffectSupport.HealPercent)]
         [InlineData(EffectSupport.Kill)]
+        [InlineData(EffectSupport.CasterCurrentHealthDamage)]
+        [InlineData(EffectSupport.CasterMissingHealthDamage)]
+        [InlineData(EffectSupport.BestElementDamage)]
         public void The_effects_with_code_are_reported_as_such(int effectId)
         {
             Assert.Contains(effectId, EffectSupport.HandledDirectly);

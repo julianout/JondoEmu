@@ -129,11 +129,34 @@ namespace Jondo.Unity.Server.Managers
         private static readonly HashSet<int> PorLoErosionado
             = new HashSet<int> { 1092, 1093, 1094, 1095, 1096, 1118, 1119, 1120, 1121, 1122 };
 
+        private static readonly HashSet<int> SpecialDamages = new HashSet<int>
+        {
+            EffectSupport.CasterCurrentHealthDamage,
+            EffectSupport.CasterMissingHealthDamage,
+            EffectSupport.BestElementDamage,
+        };
+
         public static bool PegaSegunLoErosionado(int efecto) => PorLoErosionado.Contains(efecto);
 
         /// <summary>¿Este efecto pega?</summary>
         public static bool EsDeDano(int efecto)
-            => (efecto >= DanoPrimero && efecto <= DanoUltimo) || PegaSegunLoErosionado(efecto);
+            => (efecto >= DanoPrimero && efecto <= DanoUltimo)
+               || PegaSegunLoErosionado(efecto) || SpecialDamages.Contains(efecto);
+
+        internal static bool IsCasterHealthDamage(int effectId)
+            => effectId == EffectSupport.CasterCurrentHealthDamage
+               || effectId == EffectSupport.CasterMissingHealthDamage;
+
+        internal static int CasterHealthDamageBase(Fighter caster, int effectId, int percent)
+        {
+            if (caster == null || percent <= 0 || !IsCasterHealthDamage(effectId)) return 0;
+
+            int health = effectId == EffectSupport.CasterCurrentHealthDamage
+                ? Math.Max(0, caster.CurrentHP)
+                : Math.Max(0, caster.MaxHP - caster.CurrentHP);
+            long damage = (long)health * percent / 100L;
+            return damage >= int.MaxValue ? int.MaxValue : (int)damage;
+        }
 
         /// <summary>
         /// Los golpes que da un hechizo: uno por cada efecto de daño que le toque al objetivo.
@@ -151,11 +174,13 @@ namespace Jondo.Unity.Server.Managers
             foreach (var efecto in EfectosDeLaTirada(hechizo, grado, critico))
             {
                 if (!EsDeDano(efecto.EffectId)) continue;
+                if (!efecto.Disparadores().Any(trigger =>
+                        string.Equals(trigger, AlLanzar, StringComparison.OrdinalIgnoreCase)))
+                    continue;
 
                 // El elemento lo dice el propio hechizo en su effectElement; si no lo trae, el
                 // catálogo por el número de efecto.
-                int elemento = efecto.Element >= 0 ? efecto.Element
-                                                   : DatabaseManager.EffectElement(efecto.EffectId);
+                int elemento = DamageElementFor(quienLanza, efecto, combate.RoundNumber);
                 foreach (var sobre in AQuien(combate, quienLanza, objetivo, efecto, celdaApuntada))
                 {
                     if (sobre == null || !sobre.IsAlive) continue;
@@ -169,6 +194,31 @@ namespace Jondo.Unity.Server.Managers
                 }
             }
             return fuera;
+        }
+
+        internal static int DamageElementFor(Fighter caster, SpellEffect effect, int round)
+        {
+            if (effect.EffectId != EffectSupport.BestElementDamage)
+                return effect.Element >= 0 ? effect.Element
+                                           : DatabaseManager.EffectElement(effect.EffectId);
+
+            var elements = new[]
+            {
+                (Element: 1, Value: caster.Strength + caster.Buffs.De(10, round)),
+                (Element: 2, Value: caster.Intelligence + caster.Buffs.De(15, round)),
+                (Element: 3, Value: caster.Chance + caster.Buffs.De(13, round)),
+                (Element: 4, Value: caster.Agility + caster.Buffs.De(14, round)),
+            };
+
+            int bestElement = 1;
+            int bestValue = int.MinValue;
+            foreach (var candidate in elements)
+            {
+                if (candidate.Value <= bestValue) continue;
+                bestElement = candidate.Element;
+                bestValue = candidate.Value;
+            }
+            return bestElement;
         }
 
         /// <summary>
@@ -624,7 +674,8 @@ namespace Jondo.Unity.Server.Managers
                                             int sharedHealRoll = int.MinValue)
         {
             // El daño lo lleva quien ya lo llevaba; aquí no se toca.
-            if (efecto.EffectId >= DanoPrimero && efecto.EffectId <= DanoUltimo) return null;
+            if ((efecto.EffectId >= DanoPrimero && efecto.EffectId <= DanoUltimo)
+                || SpecialDamages.Contains(efecto.EffectId)) return null;
 
             if (efecto.EffectId == Empujar || efecto.EffectId == Tirar ||
                 efecto.EffectId == Retroceder || efecto.EffectId == Avanzar)
