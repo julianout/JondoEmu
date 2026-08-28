@@ -77,6 +77,11 @@ namespace Jondo.Unity.World.Combat
         /// <summary>Heal a fixed amount, scaled by Intelligence and the Heals characteristic.</summary>
         public const int Heal = 108;
 
+        /// <summary>Elemental fixed heals scale with Chance, Agility, and Strength.</summary>
+        public const int WaterHeal = 2998;
+        public const int AirHeal = 2999;
+        public const int EarthHeal = 3000;
+
         /// <summary>Heal a percentage of maximum life.</summary>
         public const int HealPercent = 1109;
 
@@ -108,7 +113,8 @@ namespace Jondo.Unity.World.Combat
             {
                 Push, Pull, StepBack, StepForward,
                 AddState, RemoveState,
-                CastSpell, Summon, ControllableSummon, Heal, HealPercent, Kill,
+                CastSpell, Summon, ControllableSummon,
+                Heal, WaterHeal, AirHeal, EarthHeal, HealPercent, Kill,
             };
 
             for (int damage = FirstDamage; damage <= LastDamage; damage++) known.Add(damage);

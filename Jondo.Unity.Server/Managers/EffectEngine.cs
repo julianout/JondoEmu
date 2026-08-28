@@ -264,9 +264,17 @@ namespace Jondo.Unity.Server.Managers
 
         public static bool VaAlSuelo(int efecto) => AlSuelo.Contains(efecto);
 
-        /// <summary>Fixed healing. Intelligence scales the roll and characteristic 49 is flat.</summary>
-        private const int FixedHeal = EffectSupport.Heal;
+        private static readonly HashSet<int> FixedHeals = new HashSet<int>
+        {
+            EffectSupport.Heal, EffectSupport.WaterHeal,
+            EffectSupport.AirHeal, EffectSupport.EarthHeal,
+        };
 
+        private static bool IsFixedHeal(int effectId) => FixedHeals.Contains(effectId);
+
+        private const int StrengthCharacteristic = 10;
+        private const int ChanceCharacteristic = 13;
+        private const int AgilityCharacteristic = 14;
         private const int IntelligenceCharacteristic = 15;
         private const int HealsCharacteristic = 49;
 
@@ -275,15 +283,16 @@ namespace Jondo.Unity.Server.Managers
 
         /// <summary>
         /// Applies the fixed-heal formula after the shared effect roll and zone falloff.
-        /// Power and damage bonuses do not participate; flat heals are added after Intelligence,
-        /// and received-healing multipliers are applied last.
+        /// Power and damage bonuses do not participate; flat heals are added after the relevant
+        /// elemental characteristic, and received-healing multipliers are applied last.
         /// </summary>
-        internal static int CalculateFixedHeal(int baseHeal, int intelligence, int flatHeals,
-                                               int receivedMultiplier = 100)
+        internal static int CalculateFixedHeal(int baseHeal, int scalingCharacteristic,
+                                               int flatHeals, int receivedMultiplier = 100)
         {
             if (baseHeal <= 0 || receivedMultiplier <= 0) return 0;
 
-            long scaled = (long)baseHeal * Math.Max(0L, 100L + intelligence) / 100L + flatHeals;
+            long scaled = (long)baseHeal * Math.Max(0L, 100L + scalingCharacteristic)
+                / 100L + flatHeals;
             if (scaled <= 0) return 0;
 
             double received = scaled * (receivedMultiplier / 100.0);
@@ -393,7 +402,7 @@ namespace Jondo.Unity.Server.Managers
 
                 // Fixed healing follows damage's roll semantics: one effect roll is shared by all
                 // recipients in the zone, then each recipient gets its own distance falloff.
-                int sharedHealRoll = efecto.EffectId == FixedHeal
+                int sharedHealRoll = IsFixedHeal(efecto.EffectId)
                     ? (rollEffect != null ? rollEffect(efecto)
                                           : DelDado(efecto.DiceNum, efecto.DiceSide, efecto.Value))
                     : int.MinValue;
@@ -868,9 +877,10 @@ namespace Jondo.Unity.Server.Managers
             }
 
             // Fixed healing uses one roll for the whole zone. Distance falloff changes only that
-            // shared base; Intelligence, flat heals and the target's received-healing multiplier
-            // are then applied independently. Power and damage bonuses never participate.
-            if (efecto.EffectId == FixedHeal)
+            // shared base; its matching elemental characteristic, flat heals and the target's
+            // received-healing multiplier are then applied independently. Power and damage
+            // bonuses never participate.
+            if (IsFixedHeal(efecto.EffectId))
             {
                 if (sobre == null || !sobre.IsAlive) return null;
 
@@ -884,12 +894,21 @@ namespace Jondo.Unity.Server.Managers
                     : 0;
                 baseHeal = ConLaCaidaDeLaZona(baseHeal, efecto, distance);
 
-                int intelligence = quienLanza.Intelligence
-                    + quienLanza.Buffs.De(IntelligenceCharacteristic, ronda);
+                int healingCharacteristic = efecto.EffectId switch
+                {
+                    EffectSupport.WaterHeal => quienLanza.Chance
+                        + quienLanza.Buffs.De(ChanceCharacteristic, ronda),
+                    EffectSupport.AirHeal => quienLanza.Agility
+                        + quienLanza.Buffs.De(AgilityCharacteristic, ronda),
+                    EffectSupport.EarthHeal => quienLanza.Strength
+                        + quienLanza.Buffs.De(StrengthCharacteristic, ronda),
+                    _ => quienLanza.Intelligence
+                        + quienLanza.Buffs.De(IntelligenceCharacteristic, ronda),
+                };
                 int flatHeals = quienLanza.Otra(HealsCharacteristic)
                     + quienLanza.Buffs.De(HealsCharacteristic, ronda);
                 int receivedMultiplier = sobre.Buffs.Multiplicador(ReceivedHealingPercent, ronda);
-                int points = CalculateFixedHeal(baseHeal, intelligence, flatHeals,
+                int points = CalculateFixedHeal(baseHeal, healingCharacteristic, flatHeals,
                                                 receivedMultiplier);
                 return ApplyHealing(combate, quienLanza, sobre, hechizo, grado, efecto,
                                     ronda, points);

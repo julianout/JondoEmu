@@ -121,6 +121,33 @@ namespace Jondo.Unity.Tests.Combat
             Assert.Equal(554, target.CurrentHP);
         }
 
+        [Theory]
+        [InlineData(EffectSupport.WaterHeal, 20)]
+        [InlineData(EffectSupport.AirHeal, 30)]
+        [InlineData(EffectSupport.EarthHeal, 40)]
+        [InlineData(EffectSupport.Heal, 50)]
+        public void Elemental_fixed_heals_use_their_matching_characteristic(
+            int effectId, int expectedHealing)
+        {
+            var fight = new FightInstance(1, 1);
+            var caster = Fighter(1, 100, 1000, 1000);
+            caster.Chance = 100;
+            caster.Agility = 200;
+            caster.Strength = 300;
+            caster.Intelligence = 400;
+            var target = Fighter(2, 101, 100, 1000);
+            fight.AddPlayer(caster);
+            fight.AddPlayer(target);
+            var effect = FixedHeal(10, 10, effectId: effectId);
+
+            var outcome = Assert.Single(EffectEngine.ResolveEffects(
+                fight, caster, 100, 1, target, EffectEngine.AlLanzar, 1,
+                new[] { effect }));
+
+            Assert.Equal(expectedHealing, outcome.Cura);
+            Assert.Equal(100 + expectedHealing, target.CurrentHP);
+        }
+
         [Fact]
         public void Percentage_healing_keeps_its_minimum_and_has_no_point_falloff()
         {
@@ -218,10 +245,11 @@ namespace Jondo.Unity.Tests.Combat
         private static Fighter Fighter(long id, int cell, int currentHp, int maxHp)
             => new Fighter { Id = id, CellId = cell, CurrentHP = currentHp, MaxHP = maxHp };
 
-        private static SpellEffect FixedHeal(int diceMin, int diceMax, string targetMask = "")
+        private static SpellEffect FixedHeal(int diceMin, int diceMax, string targetMask = "",
+                                             int effectId = EffectSupport.Heal)
             => new SpellEffect
             {
-                EffectId = EffectSupport.Heal,
+                EffectId = effectId,
                 EffectUid = 1,
                 DiceNum = diceMin,
                 DiceSide = diceMax,
