@@ -450,6 +450,8 @@ namespace Jondo.Unity.Server.Managers
         ///   a, A       a los del otro bando (y a los del propio, según el juego; aquí, al objetivo)
         ///   e&lt;N&gt;      sólo si NO lleva el estado N
         ///   E&lt;N&gt;      sólo si SÍ lo lleva
+        ///   V&lt;N&gt;      target life is below N percent (exclusive upper bound)
+        ///   v&lt;N&gt;      target life is at least N percent (inclusive lower bound)
         ///
         /// Lo demás de la máscara —"P", "g", "F434", "*e2131"— son afinados que este motor todavía
         /// no distingue; con ellos se cae al objetivo del lanzamiento, que es lo razonable.
@@ -462,6 +464,7 @@ namespace Jondo.Unity.Server.Managers
             bool alLanzador = false, aLosMios = false, aLosDeEnfrente = false, aLasInvocaciones = false;
             var pideEstado = new List<int>();
             var pideNoEstado = new List<int>();
+            int minimumHealthPercent = -1, maximumHealthPercent = -1;
 
             foreach (var trozo in mascara.Split(','))
             {
@@ -488,6 +491,16 @@ namespace Jondo.Unity.Server.Managers
                 if (t.Length > 1 && (t[0] == 'e' || t[0] == 'E') && int.TryParse(t.Substring(1), out int estado))
                 {
                     if (t[0] == 'E') pideEstado.Add(estado); else pideNoEstado.Add(estado);
+                    continue;
+                }
+
+                // Catalogue staircases such as V100,v95 then V95,v90 are consecutive bands.
+                // Uppercase V is the exclusive ceiling; lowercase v is the inclusive floor.
+                if (t.Length > 1 && (t[0] == 'V' || t[0] == 'v') &&
+                    int.TryParse(t.Substring(1), out int healthPercent))
+                {
+                    if (t[0] == 'V') maximumHealthPercent = healthPercent;
+                    else minimumHealthPercent = healthPercent;
                 }
             }
 
@@ -538,6 +551,11 @@ namespace Jondo.Unity.Server.Managers
                 bool vale = true;
                 foreach (int estado in pideEstado) if (!quien.Buffs.TieneEstado(estado)) vale = false;
                 foreach (int estado in pideNoEstado) if (quien.Buffs.TieneEstado(estado)) vale = false;
+                int healthPercent = quien.MaxHP > 0
+                    ? (int)((long)quien.CurrentHP * 100L / quien.MaxHP)
+                    : 0;
+                if (maximumHealthPercent >= 0 && healthPercent >= maximumHealthPercent) vale = false;
+                if (minimumHealthPercent >= 0 && healthPercent < minimumHealthPercent) vale = false;
                 if (vale) yield return quien;
             }
         }
