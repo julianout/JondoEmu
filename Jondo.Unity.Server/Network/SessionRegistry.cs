@@ -31,6 +31,7 @@ namespace Jondo.Unity.Server.Network
             public long AccountId { get; init; }
             public int ServerId { get; init; }
             public string Language { get; init; } = "es";
+            public int LaunchInstanceId { get; init; }
             public DateTime Created { get; init; }
         }
 
@@ -56,7 +57,17 @@ namespace Jondo.Unity.Server.Network
             }
         }
 
-        public static bool Unregister(GameSession session) => _sessions.TryRemove(session.Id, out _);
+        public static bool Unregister(GameSession session)
+        {
+            bool removed = _sessions.TryRemove(session.Id, out _);
+            if (ClientLaunchRegistry.TryRemoveDisconnected(
+                    session.AccountId, session.LaunchInstanceId))
+            {
+                Program.LogDebug($"[Sessions] Account {session.AccountId} launch " +
+                                 $"{session.LaunchInstanceId} released after its game socket closed.");
+            }
+            return removed;
+        }
 
         public static bool TryGet(Guid sessionId, out GameSession? session)
             => _sessions.TryGetValue(sessionId, out session);
@@ -180,7 +191,8 @@ namespace Jondo.Unity.Server.Network
         }
 
         /// <summary>Creates a new ticket for a specific account, server and client language.</summary>
-        public static Ticket Issue(long accountId, int serverId, string language = "es")
+        public static Ticket Issue(long accountId, int serverId, string language = "es",
+                                   int launchInstanceId = 0)
         {
             Purge();
 
@@ -197,6 +209,7 @@ namespace Jondo.Unity.Server.Network
                 AccountId = accountId,
                 ServerId = serverId,
                 Language = normalized,
+                LaunchInstanceId = launchInstanceId,
                 Created = DateTime.UtcNow
             };
             _tickets[ticket.Value] = ticket;

@@ -1118,7 +1118,8 @@ namespace Jondo.Unity.Server.Network
 
                 accountId = session.AccountId;
                 serverId = session.ServerId;
-                SessionContext.Current.BindAccount(accountId, serverId, session.Language);
+                SessionContext.Current.BindAccount(
+                    accountId, serverId, session.Language, session.LaunchInstanceId);
                 return true;
             }
             catch (Exception ex)

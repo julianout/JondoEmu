@@ -167,7 +167,29 @@ namespace Jondo.Unity.Server.Network
         /// </summary>
         public static void RemoveByAccount(long accountId)
         {
-            if (ByAccount.TryGetValue(accountId, out var launch)) Remove(launch);
+            lock (RegistrationGate)
+            {
+                if (ByAccount.TryGetValue(accountId, out var launch)) Remove(launch);
+            }
+        }
+
+        /// <summary>
+        /// Releases the launch owned by a game socket that has just disconnected. The instance
+        /// check prevents an old socket from deleting a newer relaunch of the same account.
+        /// </summary>
+        public static bool TryRemoveDisconnected(long accountId, int launchInstanceId)
+        {
+            if (accountId <= 0 || launchInstanceId <= 0) return false;
+
+            lock (RegistrationGate)
+            {
+                if (!ByAccount.TryGetValue(accountId, out var launch)
+                    || launch.InstanceId != launchInstanceId)
+                    return false;
+
+                Remove(launch);
+                return true;
+            }
         }
 
         /// <summary>Las cuentas que tienen un cliente abierto ahora mismo.</summary>
