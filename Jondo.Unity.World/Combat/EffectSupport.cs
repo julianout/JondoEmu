@@ -71,6 +71,9 @@ namespace Jondo.Unity.World.Combat
         /// <summary>Summon a creature.</summary>
         public const int Summon = 181;
 
+        /// <summary>Summon a controllable creature through the same combatant creation path.</summary>
+        public const int ControllableSummon = 1011;
+
         /// <summary>Heal a fixed amount, scaled by Intelligence and the Heals characteristic.</summary>
         public const int Heal = 108;
 
@@ -105,7 +108,7 @@ namespace Jondo.Unity.World.Combat
             {
                 Push, Pull, StepBack, StepForward,
                 AddState, RemoveState,
-                CastSpell, Summon, Heal, HealPercent, Kill,
+                CastSpell, Summon, ControllableSummon, Heal, HealPercent, Kill,
             };
 
             for (int damage = FirstDamage; damage <= LastDamage; damage++) known.Add(damage);

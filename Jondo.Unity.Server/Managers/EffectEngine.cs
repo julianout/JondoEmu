@@ -42,6 +42,9 @@ namespace Jondo.Unity.Server.Managers
         /// <summary>La plantilla de bicho que hay que sacar al tablero, si el efecto invoca.</summary>
         public int Invoca { get; init; }
 
+        /// <summary>The one-based monster grade carried by a summon effect's dice side.</summary>
+        public int SummonGrade { get; init; }
+
         /// <summary>
         /// Cuántos puntos se lleva el que lanza, cuando el efecto es de ROBO. Los mismos que se
         /// le han quitado al objetivo, que van en <see cref="Cuanto"/> en negativo.
@@ -244,6 +247,7 @@ namespace Jondo.Unity.Server.Managers
 
         /// <summary>"Invoca: #1". La plantilla del bicho viaja en el dado.</summary>
         public const int Invocar = EffectSupport.Summon;
+        public const int ControllableSummon = EffectSupport.ControllableSummon;
 
         /// <summary>
         /// Los efectos que colocan algo EN UNA CASILLA en vez de sobre alguien: una invocación,
@@ -253,7 +257,10 @@ namespace Jondo.Unity.Server.Managers
         ///   401  "Coloca un glifo de inicio de turno"
         ///   1091 "Coloca un glifo aura"
         /// </summary>
-        private static readonly HashSet<int> AlSuelo = new HashSet<int> { 181, 400, 401, 1091 };
+        private static readonly HashSet<int> AlSuelo = new HashSet<int>
+        {
+            EffectSupport.Summon, EffectSupport.ControllableSummon, 400, 401, 1091
+        };
 
         public static bool VaAlSuelo(int efecto) => AlSuelo.Contains(efecto);
 
@@ -707,7 +714,7 @@ namespace Jondo.Unity.Server.Managers
                 };
             }
 
-            if (efecto.EffectId == Invocar)
+            if (efecto.EffectId == Invocar || efecto.EffectId == ControllableSummon)
             {
                 // "Invoca: #1", con la plantilla del bicho en el dado. No lo saca al tablero el
                 // motor: hace falta repartir identificador, rehacer el orden de turnos y avisar
@@ -718,6 +725,7 @@ namespace Jondo.Unity.Server.Managers
                     Sobre = sobre, Efecto = efecto,
                     HechizoOrigen = hechizo, NivelOrigen = grado,
                     Invoca = efecto.DiceNum,
+                    SummonGrade = efecto.DiceSide > 0 ? efecto.DiceSide : 1,
                 };
             }
 

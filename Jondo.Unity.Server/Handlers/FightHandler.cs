@@ -1884,11 +1884,9 @@ namespace Jondo.Unity.Server.Handlers
             // Y el reloj, con la MISMA duración que se le acaba de decir al cliente.
             ArrancarElReloj(stream, fight, fighter, duration);
 
-            // El monstruo juega solo: no hay nadie que pulse por él. Un invocado NO pasa por la
-            // inteligencia de los monstruos —no persigue ni ataca— porque lo suyo ya lo ha hecho
-            // su propio hechizo en las actitudes de principio de turno: la baliza se cura o
-            // empuja ahí y no tiene que hacer nada más.
-            if (fighter.IsMonster && !fighter.EsInvocado)
+            // Monsters and active summons need AI because nobody controls their turn. Passive
+            // beacons skip it after their start-of-turn attitudes have resolved.
+            if (ShouldUseMonsterAi(fighter))
             {
                 await MonsterTurnAsync(stream, fight, fighter);
             }
@@ -1948,6 +1946,11 @@ namespace Jondo.Unity.Server.Handlers
                 Network.FightProtocol.BuildSequenceEnd(
                     fight.SiguienteAccion(), sequenceOwner, Network.FightProtocol.ActionSequence)));
         }
+
+        /// <summary>Active summons use monster AI; passive beacons only execute their attitudes.</summary>
+        internal static bool ShouldUseMonsterAi(Fighter fighter)
+            => fighter != null && fighter.IsMonster
+               && (!fighter.EsInvocado || fighter.SpellIds.Count > 0);
 
         /// <summary>
         /// Los puntos de vuelta al empezar el turno.
@@ -2327,11 +2330,9 @@ namespace Jondo.Unity.Server.Handlers
         ///
         /// No es un embrujo, es un COMBATIENTE. Se le reparte identificador negativo, se le monta
         /// la ficha desde la plantilla del bicho, se mete en el bando del que invoca y entra en el
-        /// orden de turnos. Y su comportamiento no se escribe aquí: sale del
-        /// <c>startingSpellId</c> de su grado, que es un hechizo lleno de enganches 792 —"al
-        /// empezar mi turno lanza mi grado 2"—, la misma maquinaria que las actitudes de los
-        /// dofus. Por eso la Baliza de Supervivencia se cura sola y la Táctica empuja sola sin
-        /// que haya una línea escrita sobre ninguna de las dos.
+        /// orden de turnos. Passive summons use their grade's <c>startingSpellId</c> as a
+        /// start-of-turn attitude. Active summons receive the spell list from MonsterTemplates
+        /// and play their own turn through monster AI.
         /// </summary>
         private static async Task InvocarAsync(NetworkStream stream, FightInstance fight,
                                                Fighter quienInvoca, int plantilla, int grado,
@@ -2364,40 +2365,11 @@ namespace Jondo.Unity.Server.Handlers
                 return;
             }
 
-            var invocado = new Fighter
-            {
-                Id = fight.SiguienteIdDeInvocado(),
-                Name = $"invocado {plantilla}",
-                CellId = celda,
-                IsMonster = true,
-                MonsterId = plantilla,
-                GradeIndex = grado,
-                Level = receta.Nivel,
-                Look = receta.Look,
-                HechizoPropio = receta.HechizoPropio,
-                MaxAP = receta.PuntosDeAccion,
-                CurrentAP = receta.PuntosDeAccion,
-                MaxMP = receta.PuntosDeMovimiento,
-                CurrentMP = receta.PuntosDeMovimiento,
-                NeutralResPct = receta.ResistenciaNeutral,
-                EarthResPct = receta.ResistenciaTierra,
-                FireResPct = receta.ResistenciaFuego,
-                WaterResPct = receta.ResistenciaAgua,
-                AirResPct = receta.ResistenciaAire,
-            };
-            invocado.MaxHP = Managers.Summons.VidaDelInvocado(receta.Vida, quienInvoca.Level,
-                                                              receta.VidaFija);
-            invocado.CurrentHP = invocado.MaxHP;
+            var invocado = CreateSummonedFighter(fight, quienInvoca, plantilla, grado, celda);
+            if (invocado == null) return;
 
             int vive = Managers.Summons.RondasQueVive(plantilla);
             invocado.MuereEnRonda = vive > 0 ? fight.RoundNumber + vive : -1;
-
-            // ¿Le toca turno? Sólo si su hechizo tiene algo que hacer al empezarlo. La Baliza de
-            // Supervivencia lo tiene —se cura sola— y la Táctica no, que sólo reacciona a lo que
-            // le pase alrededor; por eso en las capturas la primera juega y la segunda no aparece
-            // ni una vez en el carrusel.
-            invocado.JuegaTurno = TieneAlgoQueHacerAlEmpezar(receta.HechizoPropio,
-                                                             receta.GradoDelHechizoPropio);
 
             fight.Invocar(invocado, quienInvoca);
 
@@ -2412,7 +2384,9 @@ namespace Jondo.Unity.Server.Handlers
 
             Program.LogDebug($"[Combate] {quienInvoca.Id} invoca la plantilla {plantilla} grado " +
                              $"{grado} como {invocado.Id} en la casilla {celda} con " +
-                             $"{invocado.MaxHP} de vida y el hechizo {receta.HechizoPropio}.");
+                             $"{invocado.MaxHP} de vida, actitud {receta.HechizoPropio}, " +
+                             $"hechizos [{string.Join(",", invocado.SpellIds)}] y " +
+                             $"turno activo={invocado.JuegaTurno}.");
 
             // Su hechizo pasa a ser su actitud, y se lanza en el acto para que queden puestos sus
             // enganches y su cuenta atrás.
@@ -2423,6 +2397,58 @@ namespace Jondo.Unity.Server.Handlers
                                           receta.GradoDelHechizoPropio,
                                           invocado, Managers.EffectEngine.AlLanzar, celda);
             }
+        }
+
+        /// <summary>
+        /// Builds a summon from the one-based grade carried by the summon effect. The behaviour
+        /// spell controls passive attitudes, while MonsterTemplates.spells supplies active turns.
+        /// </summary>
+        internal static Fighter CreateSummonedFighter(FightInstance fight, Fighter owner,
+                                                      int template, int grade, int cell)
+        {
+            int oneBasedGrade = Math.Max(1, grade);
+            var recipe = Managers.Summons.De(template, oneBasedGrade);
+            if (recipe == null) return null;
+
+            var combat = DatabaseManager.GetMonsterGradeStats(template, oneBasedGrade - 1);
+            var summon = new Fighter
+            {
+                Id = fight.SiguienteIdDeInvocado(),
+                Name = $"summon {template}",
+                CellId = cell,
+                IsMonster = true,
+                MonsterId = template,
+                GradeIndex = oneBasedGrade - 1,
+                Level = recipe.Nivel,
+                Look = recipe.Look,
+                HechizoPropio = recipe.HechizoPropio,
+                MaxAP = recipe.PuntosDeAccion,
+                CurrentAP = recipe.PuntosDeAccion,
+                MaxMP = recipe.PuntosDeMovimiento,
+                CurrentMP = recipe.PuntosDeMovimiento,
+                NeutralResPct = recipe.ResistenciaNeutral,
+                EarthResPct = recipe.ResistenciaTierra,
+                FireResPct = recipe.ResistenciaFuego,
+                WaterResPct = recipe.ResistenciaAgua,
+                AirResPct = recipe.ResistenciaAire,
+                Strength = recipe.Strength,
+                Intelligence = recipe.Intelligence,
+                Chance = recipe.Chance,
+                Agility = recipe.Agility,
+                EarthDamage = recipe.EarthDamage,
+                FireDamage = recipe.FireDamage,
+                WaterDamage = recipe.WaterDamage,
+                AirDamage = recipe.AirDamage,
+                SpellIds = combat?.SpellIds ?? new List<int>(),
+                SpellGrades = combat?.SpellGrades ?? new Dictionary<int, int>(),
+            };
+            summon.MaxHP = Managers.Summons.VidaDelInvocado(recipe.Vida, owner.Level,
+                                                            recipe.VidaFija);
+            summon.CurrentHP = summon.MaxHP;
+            summon.JuegaTurno = summon.SpellIds.Count > 0
+                || TieneAlgoQueHacerAlEmpezar(recipe.HechizoPropio,
+                                              recipe.GradoDelHechizoPropio);
+            return summon;
         }
 
         /// <summary>
@@ -2615,7 +2641,8 @@ namespace Jondo.Unity.Server.Handlers
             Func<byte[], Task> sendAsync)
         {
             bool summonsImmediately = effects.Any(effect =>
-                effect.EffectId == Jondo.Unity.World.Combat.EffectSupport.Summon &&
+                (effect.EffectId == Jondo.Unity.World.Combat.EffectSupport.Summon ||
+                 effect.EffectId == Jondo.Unity.World.Combat.EffectSupport.ControllableSummon) &&
                 effect.DiceNum > 0 &&
                 effect.Disparadores().Any(trigger =>
                     string.Equals(trigger, Managers.EffectEngine.AlLanzar,
@@ -2866,7 +2893,8 @@ namespace Jondo.Unity.Server.Handlers
                 // Los que sacan un bicho al tablero.
                 if (c.Invoca != 0)
                 {
-                    await InvocarAsync(stream, fight, quienLanza, c.Invoca, grado, celdaApuntada);
+                    await InvocarAsync(stream, fight, quienLanza, c.Invoca, c.SummonGrade,
+                                       celdaApuntada);
                     continue;
                 }
 

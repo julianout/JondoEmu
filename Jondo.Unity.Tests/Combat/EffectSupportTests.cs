@@ -12,9 +12,9 @@ namespace Jondo.Unity.Tests.Combat
     /// <see cref="EffectSupport"/>, so an effect gaining an implementation without being added here
     /// would not compile.
     ///
-    /// Measured over the 872 effects in <c>world.db</c>: 21 have code, 205 are applied as a
-    /// characteristic, and <b>646 do nothing at all</b> — and 15,348 of the 34,823 spell levels
-    /// carry at least one of those 646.
+    /// Measured over the 872 effects in <c>world.db</c>: 22 have code, 205 are applied as a
+    /// characteristic, and <b>645 do nothing at all</b> — and 15,326 of the 34,823 spell levels
+    /// carry at least one of those 645.
     /// </remarks>
     public class EffectSupportTests
     {
@@ -39,6 +39,7 @@ namespace Jondo.Unity.Tests.Combat
         [InlineData(EffectSupport.RemoveState)]
         [InlineData(EffectSupport.CastSpell)]
         [InlineData(EffectSupport.Summon)]
+        [InlineData(EffectSupport.ControllableSummon)]
         [InlineData(EffectSupport.Heal)]
         [InlineData(EffectSupport.HealPercent)]
         [InlineData(EffectSupport.Kill)]

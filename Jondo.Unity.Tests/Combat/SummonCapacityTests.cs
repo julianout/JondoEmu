@@ -10,8 +10,11 @@ namespace Jondo.Unity.Tests.Combat
 {
     public class SummonCapacityTests
     {
-        [Fact]
-        public async Task A_summon_at_capacity_is_rejected_before_AP_is_spent_and_warns_the_client()
+        [Theory]
+        [InlineData(EffectSupport.Summon)]
+        [InlineData(EffectSupport.ControllableSummon)]
+        public async Task A_summon_at_capacity_is_rejected_before_AP_is_spent_and_warns_the_client(
+            int effectId)
         {
             var fight = new FightInstance(1, 1);
             var caster = new Fighter { Id = 10, CurrentHP = 100, CurrentAP = 6 };
@@ -25,7 +28,7 @@ namespace Jondo.Unity.Tests.Combat
 
             var summonEffect = new SpellEffect
             {
-                EffectId = EffectSupport.Summon,
+                EffectId = effectId,
                 DiceNum = 123,
                 Triggers = EffectEngine.AlLanzar,
             };
