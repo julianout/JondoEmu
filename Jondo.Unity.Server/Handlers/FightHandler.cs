@@ -4089,9 +4089,9 @@ namespace Jondo.Unity.Server.Handlers
         {
             bool alliesAlive = fight.Team0.Exists(f => f.IsAlive);
 
-            // Lo que se gana. La experiencia es la que declara cada monstruo en su ficha (gradeXp),
-            // que es la misma que enseña el cliente al pasar el ratón por el grupo; no hay fórmula
-            // inventada. Los kamas y los objetos, lo que suelte cada uno.
+            // What is earned. The monster grade provides the base experience, then the combat
+            // formula accounts for level balance, group composition, wisdom and challenges.
+            // Kamas and loot continue to come from each defeated monster.
             bool won = alliesAlive;
 
             // Los retos, antes de todo lo del final: el servidor real manda sus kwl unas pocas
@@ -4112,7 +4112,16 @@ namespace Jondo.Unity.Server.Handlers
             // criaturas que él mismo se fabricaba durante el combate. La experiencia no lo
             // notaba porque un invocado no lleva XpReward, pero los kamas sí.
             var quePagan = fight.Team1.Where(m => !m.EsInvocado).ToList();
-            long xpGained = won ? ConElExtra(quePagan.Sum(m => (long)m.XpReward), extraDeRetos) : 0;
+            var xpRecipient = fight.Team0.FirstOrDefault(f => f.Id == GameState.CharacterId)
+                              ?? fight.Team0.FirstOrDefault(f => !f.EsInvocado);
+            int wisdom = xpRecipient == null
+                ? 0
+                : Math.Max(0, xpRecipient.Otra(12) + xpRecipient.Buffs.De(12, fight.RoundNumber));
+            var xpResult = won && xpRecipient != null
+                ? FightExperience.Calculate(
+                    fight.Team0, fight.Team1, xpRecipient, wisdom, extraDeRetos)
+                : default;
+            long xpGained = xpResult.Total;
             long kamas = won ? ConElExtra(quePagan.Sum(m => 10L + (m.Level * 5L)), extraDeRetos) : 0;
             var caidos = new List<PlayerItem>();
             var loot = won ? RollFightLoot(fight, extraDeRetos, out caidos)
@@ -4122,6 +4131,19 @@ namespace Jondo.Unity.Server.Handlers
             {
                 Program.LogDebug($"[Retos] Los retos cumplidos suman un {extraDeRetos} % de mas: " +
                                  $"{xpGained} de experiencia y {kamas} kamas.");
+            }
+
+            if (won && xpRecipient != null)
+            {
+                Program.LogDebug(
+                    $"[Combate] Formula XP: base {xpResult.BaseExperience}, niveles " +
+                    $"{xpResult.WinnerLevelTotal}/{xpResult.LoserLevelTotal}, " +
+                    $"grupo x{xpResult.GroupCoefficient:0.##}, equilibrio " +
+                    $"x{xpResult.LevelBalance:0.####}, monstruo mayor " +
+                    $"x{xpResult.HighestMonsterBalance:0.####}, parte " +
+                    $"{xpResult.RecipientShare:P2}, " +
+                    $"sabiduria {xpResult.Wisdom}, retos +{xpResult.ChallengeBonusPercent} %, " +
+                    $"total {xpGained}.");
             }
 
             if (xpGained > 0)
